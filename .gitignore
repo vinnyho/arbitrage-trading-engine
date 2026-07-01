@@ -2,3 +2,6 @@
 .env
 *.pem
 *.key
+pairs.json
+.DS_Store
+writeup.md

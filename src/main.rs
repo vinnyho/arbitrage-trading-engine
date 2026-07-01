@@ -1,3 +1,4 @@
+mod discovery;
 mod kalshi;
 mod polymarket;
 mod types;
@@ -11,6 +12,14 @@ use tokio::sync::Mutex;
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
+
+    // `cargo run -- discover` runs the daily match-list builder and exits.
+    if std::env::args().nth(1).as_deref() == Some("discover") {
+        if let Err(e) = discovery::run_discovery().await {
+            println!("discovery error: {}", e);
+        }
+        return;
+    }
 
     let kalshi_books = Arc::new(Mutex::new(HashMap::<String, OrderBook>::new()));
     let polymarket_books = Arc::new(Mutex::new(HashMap::<String, OrderBook>::new()));
