@@ -1,8 +1,11 @@
 mod discovery;
 mod kalshi;
 mod polymarket;
+mod scanner;
 mod types;
+use crate::discovery::MarketPair;
 use crate::types::OrderBook;
+use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,7 +23,9 @@ async fn main() {
         }
         return;
     }
+    let content = std::fs::read_to_string("pairs.json").unwrap();
 
+    let pairs: Vec<MarketPair> = serde_json::from_str(&content).unwrap();
     let kalshi_books = Arc::new(Mutex::new(HashMap::<String, OrderBook>::new()));
     let polymarket_books = Arc::new(Mutex::new(HashMap::<String, OrderBook>::new()));
 
@@ -44,7 +49,5 @@ async fn main() {
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
     });
-    loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-    }
+    scanner::run(pairs, kalshi_books, polymarket_books).await;
 }
