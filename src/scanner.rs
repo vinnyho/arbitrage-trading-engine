@@ -1,7 +1,7 @@
 use crate::discovery::MarketPair;
 use crate::types::OrderBook;
 use chrono::Utc;
-use std::collections::HashMap;
+use std::collections::{HashSet, HashMap};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
@@ -26,6 +26,7 @@ pub async fn run(
         .append(true)
         .open("arb_log.txt")
         .unwrap();
+    let mut active_arbs: HashSet<String> = HashSet::new();
 
     loop {
         let kalshi = kalshi_books.lock().await;
@@ -38,27 +39,39 @@ pub async fn run(
             if let (Some(k), Some(p)) = (k, p) {
                 if let (Some(k_ask), Some(p_bid)) = (k.best_ask, p.best_bid) {
                     let spread = p_bid - k_ask;
+                    let key = format!("{}:buy-kalshi", pair.canonical_id);
                     if spread > MIN_SPREAD {
-                        log_arb(
-                            &mut log,
-                            &format!(
-                                "ARB buy-kalshi-sell-poly | {} | buy {:.3} sell {:.3} spread {:.4}",
-                                pair.canonical_id, k_ask, p_bid, spread
-                            ),
-                        );
+                        if !active_arbs.contains(&key) {
+                            log_arb(
+                                &mut log,
+                                &format!(
+                                    "ARB OPEN buy-kalshi-sell-poly | {} | buy {:.3} sell {:.3} spread {:.4}",
+                                    pair.canonical_id, k_ask, p_bid, spread
+                                ),
+                            );
+                            active_arbs.insert(key);
+                        }
+                    } else {
+                        active_arbs.remove(&key);
                     }
                 }
 
                 if let (Some(p_ask), Some(k_bid)) = (p.best_ask, k.best_bid) {
                     let spread = k_bid - p_ask;
+                    let key = format!("{}:buy-poly", pair.canonical_id);
                     if spread > MIN_SPREAD {
-                        log_arb(
-                            &mut log,
-                            &format!(
-                                "ARB buy-poly-sell-kalshi | {} | buy {:.3} sell {:.3} spread {:.4}",
-                                pair.canonical_id, p_ask, k_bid, spread
-                            ),
-                        );
+                        if !active_arbs.contains(&key) {
+                            log_arb(
+                                &mut log,
+                                &format!(
+                                    "ARB OPEN buy-poly-sell-kalshi | {} | buy {:.3} sell {:.3} spread {:.4}",
+                                    pair.canonical_id, p_ask, k_bid, spread
+                                ),
+                            );
+                            active_arbs.insert(key);
+                        }
+                    } else {
+                        active_arbs.remove(&key);
                     }
                 }
             }
