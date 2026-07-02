@@ -1,7 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MarketPair {
@@ -13,274 +10,230 @@ pub struct MarketPair {
     pub polymarket_token_id: String,
 }
 
-fn mlb_team_table() -> HashMap<&'static str, &'static str> {
-    HashMap::from([
-        ("AZ", "Arizona Diamondbacks"),
-        ("ATL", "Atlanta Braves"),
-        ("BAL", "Baltimore Orioles"),
-        ("BOS", "Boston Red Sox"),
-        ("CHC", "Chicago Cubs"),
-        ("CWS", "Chicago White Sox"),
-        ("CIN", "Cincinnati Reds"),
-        ("CLE", "Cleveland Guardians"),
-        ("COL", "Colorado Rockies"),
-        ("DET", "Detroit Tigers"),
-        ("HOU", "Houston Astros"),
-        ("KC", "Kansas City Royals"),
-        ("LAA", "Los Angeles Angels"),
-        ("LAD", "Los Angeles Dodgers"),
-        ("MIA", "Miami Marlins"),
-        ("MIL", "Milwaukee Brewers"),
-        ("MIN", "Minnesota Twins"),
-        ("NYM", "New York Mets"),
-        ("NYY", "New York Yankees"),
-        ("ATH", "Athletics"),
-        ("PHI", "Philadelphia Phillies"),
-        ("PIT", "Pittsburgh Pirates"),
-        ("SD", "San Diego Padres"),
-        ("SF", "San Francisco Giants"),
-        ("SEA", "Seattle Mariners"),
-        ("STL", "St. Louis Cardinals"),
-        ("TB", "Tampa Bay Rays"),
-        ("TEX", "Texas Rangers"),
-        ("TOR", "Toronto Blue Jays"),
-        ("WSH", "Washington Nationals"),
-    ])
-}
-
-fn month_num(mon: &str) -> Option<u32> {
-    Some(match mon {
-        "JAN" => 1,
-        "FEB" => 2,
-        "MAR" => 3,
-        "APR" => 4,
-        "MAY" => 5,
-        "JUN" => 6,
-        "JUL" => 7,
-        "AUG" => 8,
-        "SEP" => 9,
-        "OCT" => 10,
-        "NOV" => 11,
-        "DEC" => 12,
-        _ => return None,
-    })
-}
-
-fn parse_kalshi_ticker(ticker: &str) -> Option<(String, String)> {
-    let rest = ticker.strip_prefix("KXMLBGAME-")?;
-    let team_code = rest.rsplit('-').next()?.to_string();
-    let date_part = rest.get(0..7)?;
-    let yy: i32 = date_part.get(0..2)?.parse().ok()?;
-    let mon = month_num(date_part.get(2..5)?)?;
-    let dd: u32 = date_part.get(5..7)?.parse().ok()?;
-    let date = format!("{:04}-{:02}-{:02}", 2000 + yy, mon, dd);
-    Some((date, team_code))
-}
-
-// ---------- Kalshi REST ----------
-
-#[derive(Debug, Deserialize)]
-struct KalshiMarketsResp {
-    markets: Vec<KalshiMarket>,
-    cursor: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct KalshiMarket {
+#[derive(Debug)]
+struct KalshiRawMarket {
     ticker: String,
+    yes_sub_title: String,
     event_ticker: String,
 }
 
-struct KalshiGame {
-    date: String,
-    teams: HashMap<String, String>,
+#[derive(Debug)]
+struct PolyRawMarket {
+    question: String,
+    start_time: String,
+    token_id: String,
+    team: String,
 }
 
-async fn fetch_kalshi_games(
+async fn fetch_kalshi_raw(
     client: &reqwest::Client,
-) -> anyhow::Result<HashMap<String, KalshiGame>> {
-    let table = mlb_team_table();
-    let mut games: HashMap<String, KalshiGame> = HashMap::new();
-    let mut cursor: Option<String> = None;
-
-    loop {
-        let mut req = client
-            .get("https://external-api.kalshi.com/trade-api/v2/markets")
-            .query(&[
-                ("series_ticker", "KXMLBGAME"),
-                ("status", "open"),
-                ("limit", "1000"),
-            ]);
-        if let Some(c) = &cursor {
-            req = req.query(&[("cursor", c.as_str())]);
-        }
-
-        let resp: KalshiMarketsResp = req.send().await?.json().await?;
-
-        for m in &resp.markets {
-            let Some((date, code)) = parse_kalshi_ticker(&m.ticker) else {
-                continue;
-            };
-            let Some(full_name) = table.get(code.as_str()) else {
-                continue;
-            };
-            games
-                .entry(m.event_ticker.clone())
-                .or_insert_with(|| KalshiGame {
-                    date: date.clone(),
-                    teams: HashMap::new(),
-                })
-                .teams
-                .insert(full_name.to_string(), m.ticker.clone());
-        }
-
-        match resp.cursor {
-            Some(c) if !c.is_empty() => cursor = Some(c),
-            _ => break,
-        }
-    }
-
-    Ok(games)
-}
-
-// ---------- Polymarket REST ----------
-
-async fn fetch_poly_moneyline(
-    client: &reqwest::Client,
-    team_a: &str,
-    team_b: &str,
-    kalshi_date: &str,
-) -> anyhow::Result<Option<HashMap<String, String>>> {
-    let q = format!("{} {}", team_a, team_b);
-    let resp: Value = client
-        .get("https://gamma-api.polymarket.com/public-search")
+    series_ticker: &str,
+) -> anyhow::Result<Vec<KalshiRawMarket>> {
+    let resp = client
+        .get("https://external-api.kalshi.com/trade-api/v2/markets")
         .query(&[
-            ("q", q.as_str()),
-            ("limit_per_type", "20"),
-            ("events_status", "active"),
+            ("series_ticker", series_ticker),
+            ("status", "open"),
+            ("limit", "1000"),
         ])
         .send()
         .await?
-        .json()
+        .json::<serde_json::Value>()
         .await?;
 
-    let Some(events) = resp.get("events").and_then(|e| e.as_array()) else {
-        return Ok(None);
+    let markets = match resp["markets"].as_array() {
+        Some(arr) => arr,
+        None => return Ok(vec![]),
     };
 
-    for event in events {
-        let Some(markets) = event.get("markets").and_then(|m| m.as_array()) else {
-            continue;
-        };
-
-        let Some(ml) = markets
-            .iter()
-            .find(|m| m.get("sportsMarketType").and_then(|v| v.as_str()) == Some("moneyline"))
-        else {
-            continue;
-        };
-
-        let outcomes = parse_str_array(ml.get("outcomes"));
-        let tokens = parse_str_array(ml.get("clobTokenIds"));
-        if outcomes.len() != 2 || tokens.len() != 2 {
-            continue;
-        }
-
-        let has_both = outcomes.iter().any(|o| o == team_a) && outcomes.iter().any(|o| o == team_b);
-        if !has_both {
-            continue;
-        }
-
-        let poly_date = event
-            .get("startTime")
-            .and_then(|v| v.as_str())
-            .and_then(to_et_date);
-        if poly_date.as_deref() != Some(kalshi_date) {
-            continue;
-        }
-
-        let mut map = HashMap::new();
-        for (outcome, token) in outcomes.iter().zip(tokens.iter()) {
-            map.insert(outcome.clone(), token.clone());
-        }
-        return Ok(Some(map));
+    let mut result = Vec::new();
+    for market in markets {
+        let ticker = market["ticker"].as_str().unwrap_or("").to_string();
+        let yes_sub_title = market["yes_sub_title"].as_str().unwrap_or("").to_string();
+        let event_ticker = market["event_ticker"].as_str().unwrap_or("").to_string();
+        result.push(KalshiRawMarket {
+            ticker,
+            yes_sub_title,
+            event_ticker,
+        });
     }
 
-    Ok(None)
+    Ok(result)
 }
 
-// Polymarket encodes arrays as strings like: "[\"Yes\", \"No\"]"
-fn parse_str_array(v: Option<&Value>) -> Vec<String> {
+async fn fetch_poly_raw(
+    client: &reqwest::Client,
+    tag_id: &str,
+) -> anyhow::Result<Vec<PolyRawMarket>> {
+    let resp = client
+        .get("https://gamma-api.polymarket.com/events")
+        .query(&[
+            ("tag_id", tag_id),
+            ("active", "true"),
+            ("closed", "false"),
+            ("limit", "100"),
+        ])
+        .send()
+        .await?
+        .json::<serde_json::Value>()
+        .await?;
+
+    let events = match resp.as_array() {
+        Some(arr) => arr,
+        None => return Ok(vec![]),
+    };
+
+    let mut result = Vec::new();
+    for event in events {
+        let start_time = event["startTime"].as_str().unwrap_or("").to_string();
+        let markets = match event["markets"].as_array() {
+            Some(m) => m,
+            None => continue,
+        };
+
+        for market in markets {
+            if market["sportsMarketType"].as_str() != Some("moneyline") {
+                continue;
+            }
+
+            let question = market["question"].as_str().unwrap_or("").to_string();
+            let outcomes: Vec<String> = parse_str_array(&market["outcomes"]);
+            let tokens: Vec<String> = parse_str_array(&market["clobTokenIds"]);
+
+            if outcomes.len() != tokens.len() || outcomes.is_empty() {
+                continue;
+            }
+
+            // push one entry per outcome so the LLM sees both teams
+            for (team, token) in outcomes.iter().zip(tokens.iter()) {
+                result.push(PolyRawMarket {
+                    question: question.clone(),
+                    start_time: start_time.clone(),
+                    token_id: token.clone(),
+                    team: team.clone(),
+                });
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+fn parse_str_array(v: &serde_json::Value) -> Vec<String> {
     match v {
-        Some(Value::String(s)) => serde_json::from_str(s).unwrap_or_default(),
-        Some(Value::Array(a)) => a
+        serde_json::Value::String(s) => serde_json::from_str(s).unwrap_or_default(),
+        serde_json::Value::Array(a) => a
             .iter()
             .filter_map(|x| x.as_str().map(|s| s.to_string()))
             .collect(),
-        _ => Vec::new(),
+        _ => vec![],
     }
 }
+async fn ask_llm(
+    client: &reqwest::Client,
+    sport: &str,
+    kalshi: &[KalshiRawMarket],
+    poly: &[PolyRawMarket],
+) -> anyhow::Result<Vec<MarketPair>> {
+    let api_key = std::env::var("OPENAI_API_KEY")?;
 
-fn to_et_date(iso: &str) -> Option<String> {
-    let dt: DateTime<Utc> = iso.parse().ok()?;
-    // Polymarket startTime is UTC; shift to Eastern (EDT) so late games match Kalshi's date
-    let et = dt - Duration::hours(4);
-    Some(et.format("%Y-%m-%d").to_string())
+    let kalshi_lines: Vec<String> = kalshi
+        .iter()
+        .map(|m| {
+            format!(
+                "ticker:{} team:{} event:{}",
+                m.ticker, m.yes_sub_title, m.event_ticker
+            )
+        })
+        .collect();
+
+    let poly_lines: Vec<String> = poly
+        .iter()
+        .map(|m| {
+            format!(
+                "question:{} team:{} date:{} token:{}",
+                m.question, m.team, m.start_time, m.token_id
+            )
+        })
+        .collect();
+
+    let prompt = format!(
+        "Match these Kalshi prediction market contracts to Polymarket contracts for the same game and team.\n\
+        Same game = same two teams playing on the same date.\n\n\
+        Kalshi markets:\n{}\n\nPolymarket markets:\n{}\n\n\
+        Return ONLY a JSON array, no explanation. Each element:\n\
+        {{\"kalshi_ticker\":\"...\",\"polymarket_token_id\":\"...\",\"team\":\"...\",\"game_date\":\"YYYY-MM-DD\",\"sport\":\"{}\",\"canonical_id\":\"...\"}}\n\
+        Only include matches you are confident about.",
+        kalshi_lines.join("\n"),
+        poly_lines.join("\n"),
+        sport
+    );
+
+    let resp = client
+        .post("https://api.openai.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&serde_json::json!({
+            "model": "gpt-5.4-2026-03-05",
+            "messages": [
+                {"role": "system", "content": "You are a prediction market matching assistant. Return only valid JSON arrays."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0
+        }))
+        .send()
+        .await?
+        .json::<serde_json::Value>()
+        .await?;
+
+    let text = resp["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("[]");
+
+    // strip markdown code fences if the model wraps output in ```json ... ```
+    let cleaned = text
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    let pairs: Vec<MarketPair> = serde_json::from_str(cleaned).unwrap_or_else(|e| {
+        println!("failed to parse llm response: {}\nraw: {}", e, cleaned);
+        vec![]
+    });
+
+    Ok(pairs)
 }
-
-// ---------- Orchestration ----------
+// sport tuple: (label, kalshi_series_ticker, polymarket_tag_id)
+const SPORTS: &[(&str, &str, &str)] =
+    &[("MLB", "KXMLBGAME", "100381"), ("WC", "KXWCGAME", "102232")];
 
 pub async fn run_discovery() -> anyhow::Result<()> {
     let client = reqwest::Client::new();
+    let mut all_pairs: Vec<MarketPair> = Vec::new();
 
-    println!("fetching Kalshi MLB games...");
-    let games = fetch_kalshi_games(&client).await?;
-    println!("found {} Kalshi games", games.len());
+    for (sport, kalshi_series, poly_tag) in SPORTS {
+        println!("fetching {} ...", sport);
+        let kalshi = fetch_kalshi_raw(&client, kalshi_series).await?;
+        let poly = fetch_poly_raw(&client, poly_tag).await?;
+        println!(
+            "  kalshi: {} markets | poly: {} markets",
+            kalshi.len(),
+            poly.len()
+        );
 
-    let mut pairs: Vec<MarketPair> = Vec::new();
-
-    for game in games.values() {
-        if game.teams.len() != 2 {
+        if poly.is_empty() {
+            println!("  no polymarket markets found, skipping");
             continue;
         }
-        let team_names: Vec<&String> = game.teams.keys().collect();
-        let (a, b) = (team_names[0], team_names[1]);
-
-        let poly = match fetch_poly_moneyline(&client, a, b, &game.date).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                println!("  no Polymarket match for {} vs {} on {}", a, b, game.date);
-                continue;
-            }
-            Err(e) => {
-                println!("  poly lookup error for {} vs {}: {}", a, b, e);
-                continue;
-            }
-        };
-
-        for (team, kalshi_ticker) in &game.teams {
-            let Some(token) = poly.get(team) else {
-                continue;
-            };
-            let canonical_id = format!("MLB-{}-{}", game.date, team.replace(' ', "_"));
-            println!(
-                "  MATCH {} | kalshi {} <-> poly {}",
-                canonical_id, kalshi_ticker, token
-            );
-            pairs.push(MarketPair {
-                canonical_id,
-                sport: "MLB".to_string(),
-                game_date: game.date.clone(),
-                team: team.clone(),
-                kalshi_ticker: kalshi_ticker.clone(),
-                polymarket_token_id: token.clone(),
-            });
-        }
+        let pairs = ask_llm(&client, sport, &kalshi, &poly).await?;
+        println!("  matched {} pairs", pairs.len());
+        all_pairs.extend(pairs);
     }
 
-    let json = serde_json::to_string_pretty(&pairs)?;
+    let json = serde_json::to_string_pretty(&all_pairs)?;
     std::fs::write("pairs.json", json)?;
-    println!("\nwrote {} pairs to pairs.json", pairs.len());
+    println!("wrote {} pairs to pairs.json", all_pairs.len());
 
     Ok(())
 }

@@ -60,14 +60,17 @@ async fn store(
     );
 }
 
-pub async fn connect(books: &Arc<Mutex<HashMap<String, OrderBook>>>) -> Result<(), anyhow::Error> {
+pub async fn connect(
+    books: &Arc<Mutex<HashMap<String, OrderBook>>>,
+    token_ids: &[String],
+) -> Result<(), anyhow::Error> {
     let (connection, _) =
         connect_async("wss://ws-subscriptions-clob.polymarket.com/ws/market").await?;
 
     let (mut write, mut read) = connection.split();
 
     let subscription = serde_json::json!({
-        "assets_ids": ["94603648636330087039501304492699481091005420017442244191603206509188088089447"],
+        "assets_ids": token_ids,
         "type": "market",
         "custom_feature_enabled": true
     });
@@ -87,8 +90,6 @@ pub async fn connect(books: &Arc<Mutex<HashMap<String, OrderBook>>>) -> Result<(
 
     while let Some(msg) = read.next().await {
         if let Ok(Message::Text(text)) = msg {
-            println!("RAW: {}", text);
-
             if let Ok(events) = serde_json::from_str::<Vec<BookEvent>>(&text) {
                 for event in events {
                     if event.event_type != "book" {
@@ -96,10 +97,6 @@ pub async fn connect(books: &Arc<Mutex<HashMap<String, OrderBook>>>) -> Result<(
                     }
                     let best_bid = event.bids.last().and_then(|l| l.price.parse::<f64>().ok());
                     let best_ask = event.asks.last().and_then(|l| l.price.parse::<f64>().ok());
-                    println!(
-                        "[book] asset: {} | bid: {:?} | ask: {:?}",
-                        event.asset_id, best_bid, best_ask
-                    );
                     store(books, event.asset_id, best_bid, best_ask).await;
                 }
                 continue;
@@ -115,10 +112,6 @@ pub async fn connect(books: &Arc<Mutex<HashMap<String, OrderBook>>>) -> Result<(
                         for item in msg.price_changes {
                             let best_bid = item.best_bid.parse::<f64>().ok();
                             let best_ask = item.best_ask.parse::<f64>().ok();
-                            println!(
-                                "[price_change] asset: {} | bid: {:?} | ask: {:?}",
-                                item.asset_id, best_bid, best_ask
-                            );
                             store(books, item.asset_id, best_bid, best_ask).await;
                         }
                     }
@@ -127,10 +120,6 @@ pub async fn connect(books: &Arc<Mutex<HashMap<String, OrderBook>>>) -> Result<(
                     if let Ok(msg) = serde_json::from_value::<BestBidAskMsg>(val) {
                         let best_bid = msg.best_bid.parse::<f64>().ok();
                         let best_ask = msg.best_ask.parse::<f64>().ok();
-                        println!(
-                            "[best_bid_ask] asset: {} | bid: {:?} | ask: {:?}",
-                            msg.asset_id, best_bid, best_ask
-                        );
                         store(books, msg.asset_id, best_bid, best_ask).await;
                     }
                 }
@@ -138,9 +127,7 @@ pub async fn connect(books: &Arc<Mutex<HashMap<String, OrderBook>>>) -> Result<(
                 | Some("market_resolved")
                 | Some("last_trade_price")
                 | Some("tick_size_change") => {}
-                other => {
-                    println!("unknown event_type: {:?}", other);
-                }
+                _ => {}
             }
         }
     }

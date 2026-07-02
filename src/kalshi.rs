@@ -91,7 +91,6 @@ pub async fn connect(books: &Arc<Mutex<HashMap<String, OrderBook>>>) -> Result<(
         if let Ok(Message::Text(text)) = msg {
             match serde_json::from_str::<KalshiTicker>(&text) {
                 Ok(parsed) => {
-                    println!("{:?}", parsed.msg);
                     if let Some(data) = parsed.msg {
                         let ticket = data.market_ticker;
                         let mut books = books.lock().await;
