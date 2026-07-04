@@ -6,6 +6,7 @@ mod scanner;
 mod types;
 use crate::discovery::MarketPair;
 use crate::types::{ArbSignal, OrderBook};
+use rsa::{RsaPrivateKey, pkcs8::DecodePrivateKey};
 use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,6 +27,11 @@ async fn main() {
     }
 
 
+    let key_id = std::env::var("KALSHI_API_KEY").unwrap();
+    let key_path = std::env::var("KALSHI_KEY_PATH").unwrap();
+    let pem_string = std::fs::read_to_string(key_path).unwrap();
+    let private_key = Arc::new(RsaPrivateKey::from_pkcs8_pem(&pem_string).unwrap());
+
     let content = std::fs::read_to_string("pairs.json").unwrap();
 
     let pairs: Vec<MarketPair> = serde_json::from_str(&content).unwrap();
@@ -33,12 +39,14 @@ async fn main() {
     let polymarket_books = Arc::new(Mutex::new(HashMap::<String, OrderBook>::new()));
 
     let kb = Arc::clone(&kalshi_books);
-    // tx is unbounded sender, rx is unbounded receiver 
     let (tx, rx) = mpsc::unbounded_channel::<ArbSignal>();
-    tokio::spawn(executor::run(rx));
+    tokio::spawn(executor::run(rx, key_id.clone(), Arc::clone(&private_key)));
+
+    let kalshi_key_id = key_id.clone();
+    let kalshi_private_key = Arc::clone(&private_key);
     tokio::spawn(async move {
         loop {
-            if let Err(e) = kalshi::connect(&kb).await {
+            if let Err(e) = kalshi::connect(&kb, &kalshi_key_id, &kalshi_private_key).await {
                 println!("error: {}", e);
             }
             tokio::time::sleep(Duration::from_secs(10)).await;
