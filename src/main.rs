@@ -25,7 +25,7 @@ async fn main() {
         }
         return;
     }
-
+    
 
     let key_id = std::env::var("KALSHI_API_KEY").unwrap();
     let key_path = std::env::var("KALSHI_KEY_PATH").unwrap();

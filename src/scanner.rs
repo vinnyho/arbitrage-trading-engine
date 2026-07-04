@@ -2,12 +2,12 @@ use crate::discovery::MarketPair;
 use crate::types::OrderBook;
 use crate::types::{ArbSignal, Exchange};
 use chrono::Utc;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{ Mutex, mpsc };
+use tokio::sync::{Mutex, mpsc};
 
 const MIN_SPREAD: f64 = 0.03;
 
@@ -21,7 +21,7 @@ pub async fn run(
     pairs: Vec<MarketPair>,
     kalshi_books: Arc<Mutex<HashMap<String, OrderBook>>>,
     poly_books: Arc<Mutex<HashMap<String, OrderBook>>>,
-    tx: mpsc::UnboundedSender<ArbSignal>
+    tx: mpsc::UnboundedSender<ArbSignal>,
 ) {
     let mut log = OpenOptions::new()
         .create(true)
@@ -62,7 +62,8 @@ pub async fn run(
                                 spread,
                                 size: 1.0,
                                 detected_at: Utc::now(),
-                            }).ok();
+                            })
+                            .ok();
                             active_arbs.insert(key);
                         }
                     } else {
@@ -93,7 +94,8 @@ pub async fn run(
                                 spread,
                                 size: 1.0,
                                 detected_at: Utc::now(),
-                            }).ok();
+                            })
+                            .ok();
                             active_arbs.insert(key);
                         }
                     } else {

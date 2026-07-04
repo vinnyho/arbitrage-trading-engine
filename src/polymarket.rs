@@ -20,7 +20,6 @@ struct BookEvent {
 #[derive(Debug, Deserialize)]
 struct PriceLevel {
     price: String,
-    #[allow(dead_code)]
     size: String,
 }
 
@@ -48,6 +47,8 @@ async fn store(
     asset_id: String,
     best_bid: Option<f64>,
     best_ask: Option<f64>,
+    bid_size: Option<f64>,
+    ask_size: Option<f64>,
 ) {
     let mut books = books.lock().await;
     books.insert(
@@ -56,6 +57,8 @@ async fn store(
             market_id: asset_id,
             best_bid,
             best_ask,
+            bid_size,
+            ask_size,
         },
     );
 }
@@ -97,7 +100,9 @@ pub async fn connect(
                     }
                     let best_bid = event.bids.last().and_then(|l| l.price.parse::<f64>().ok());
                     let best_ask = event.asks.last().and_then(|l| l.price.parse::<f64>().ok());
-                    store(books, event.asset_id, best_bid, best_ask).await;
+                    let bid_size = event.bids.last().and_then(|l| l.size.parse::<f64>().ok());
+                    let ask_size = event.asks.last().and_then(|l| l.size.parse::<f64>().ok());
+                    store(books, event.asset_id, best_bid, best_ask, bid_size, ask_size).await;
                 }
                 continue;
             }
@@ -112,7 +117,7 @@ pub async fn connect(
                         for item in msg.price_changes {
                             let best_bid = item.best_bid.parse::<f64>().ok();
                             let best_ask = item.best_ask.parse::<f64>().ok();
-                            store(books, item.asset_id, best_bid, best_ask).await;
+                            store(books, item.asset_id, best_bid, best_ask, None, None).await;
                         }
                     }
                 }
@@ -120,7 +125,7 @@ pub async fn connect(
                     if let Ok(msg) = serde_json::from_value::<BestBidAskMsg>(val) {
                         let best_bid = msg.best_bid.parse::<f64>().ok();
                         let best_ask = msg.best_ask.parse::<f64>().ok();
-                        store(books, msg.asset_id, best_bid, best_ask).await;
+                        store(books, msg.asset_id, best_bid, best_ask, None, None).await;
                     }
                 }
                 Some("new_market")

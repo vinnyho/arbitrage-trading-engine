@@ -2,6 +2,8 @@ pub struct OrderBook {
     pub market_id: String,
     pub best_bid: Option<f64>,
     pub best_ask: Option<f64>,
+    pub bid_size: Option<f64>,
+    pub ask_size: Option<f64>,
 }
 
 use chrono::{DateTime, Utc};

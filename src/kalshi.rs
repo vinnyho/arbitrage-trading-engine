@@ -25,6 +25,8 @@ struct KalshiData {
     market_ticker: String,
     yes_bid_dollars: String,
     yes_ask_dollars: String,
+    yes_bid_size_fp: String,
+    yes_ask_size_fp: String,
 }
 pub fn sign(private_key: &RsaPrivateKey, msg: &str) -> Result<String, anyhow::Error> {
     let signing_key = BlindedSigningKey::<Sha256>::new(private_key.clone());
@@ -91,6 +93,8 @@ pub async fn connect(
                                 market_id: ticket,
                                 best_bid: yes_bid_dollars.parse::<f64>().ok(),
                                 best_ask: yes_ask_dollars.parse::<f64>().ok(),
+                                bid_size: data.yes_bid_size_fp.parse::<f64>().ok(),
+                                ask_size: data.yes_ask_size_fp.parse::<f64>().ok(),
                             },
                         );
                     }

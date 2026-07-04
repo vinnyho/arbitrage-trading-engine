@@ -1,19 +1,18 @@
-use tokio::sync::mpsc;
 use crate::types::{ArbSignal, Exchange};
+use reqwest;
 use rsa::RsaPrivateKey;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use reqwest;
+use tokio::sync::mpsc;
 
 pub async fn run(
     mut rx: mpsc::UnboundedReceiver<ArbSignal>,
     key_id: String,
     private_key: Arc<RsaPrivateKey>,
-) -> Result<(), anyhow::Error >{
+) -> Result<(), anyhow::Error> {
     let mut live_trades: HashSet<String> = HashSet::new();
     let client = reqwest::Client::new();
-
 
     while let Some(signal) = rx.recv().await {
         println!("{:?}", signal);
@@ -49,7 +48,6 @@ pub async fn run(
 
             println!("{} {:?}", response.status(), response.text().await);
         }
-        
     }
     Ok(())
 }
