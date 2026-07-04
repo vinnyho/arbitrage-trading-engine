@@ -1,12 +1,13 @@
 use crate::discovery::MarketPair;
 use crate::types::OrderBook;
+use crate::types::{ArbSignal, Exchange};
 use chrono::Utc;
 use std::collections::{HashSet, HashMap};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::{ Mutex, mpsc };
 
 const MIN_SPREAD: f64 = 0.03;
 
@@ -20,6 +21,7 @@ pub async fn run(
     pairs: Vec<MarketPair>,
     kalshi_books: Arc<Mutex<HashMap<String, OrderBook>>>,
     poly_books: Arc<Mutex<HashMap<String, OrderBook>>>,
+    tx: mpsc::UnboundedSender<ArbSignal>
 ) {
     let mut log = OpenOptions::new()
         .create(true)
@@ -49,6 +51,18 @@ pub async fn run(
                                     pair.canonical_id, k_ask, p_bid, spread
                                 ),
                             );
+                            tx.send(ArbSignal {
+                                canonical_id: pair.canonical_id.clone(),
+                                kalshi_ticker: pair.kalshi_ticker.clone(),
+                                polymarket_token_id: pair.polymarket_token_id.clone(),
+                                buy_exchange: Exchange::Kalshi,
+                                sell_exchange: Exchange::Polymarket,
+                                buy_price: k_ask,
+                                sell_price: p_bid,
+                                spread,
+                                size: 1.0,
+                                detected_at: Utc::now(),
+                            }).ok();
                             active_arbs.insert(key);
                         }
                     } else {
@@ -68,6 +82,18 @@ pub async fn run(
                                     pair.canonical_id, p_ask, k_bid, spread
                                 ),
                             );
+                            tx.send(ArbSignal {
+                                canonical_id: pair.canonical_id.clone(),
+                                kalshi_ticker: pair.kalshi_ticker.clone(),
+                                polymarket_token_id: pair.polymarket_token_id.clone(),
+                                buy_exchange: Exchange::Polymarket,
+                                sell_exchange: Exchange::Kalshi,
+                                buy_price: p_ask,
+                                sell_price: k_bid,
+                                spread,
+                                size: 1.0,
+                                detected_at: Utc::now(),
+                            }).ok();
                             active_arbs.insert(key);
                         }
                     } else {
