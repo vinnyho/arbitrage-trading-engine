@@ -25,12 +25,27 @@ async fn main() {
         }
         return;
     }
-    
 
     let key_id = std::env::var("KALSHI_API_KEY").unwrap();
     let key_path = std::env::var("KALSHI_KEY_PATH").unwrap();
     let pem_string = std::fs::read_to_string(key_path).unwrap();
     let private_key = Arc::new(RsaPrivateKey::from_pkcs8_pem(&pem_string).unwrap());
+
+    let db_conn = rusqlite::Connection::open("trades.db").unwrap();
+    db_conn
+        .execute(
+            "CREATE TABLE IF NOT EXISTS trades (
+                id INTEGER PRIMARY KEY,
+                canonical_id TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                price REAL NOT NULL,
+                count INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .unwrap();
 
     let content = std::fs::read_to_string("pairs.json").unwrap();
 
@@ -40,7 +55,12 @@ async fn main() {
 
     let kb = Arc::clone(&kalshi_books);
     let (tx, rx) = mpsc::unbounded_channel::<ArbSignal>();
-    tokio::spawn(executor::run(rx, key_id.clone(), Arc::clone(&private_key)));
+    tokio::spawn(executor::run(
+        rx,
+        key_id.clone(),
+        Arc::clone(&private_key),
+        db_conn,
+    ));
 
     let kalshi_key_id = key_id.clone();
     let kalshi_private_key = Arc::clone(&private_key);

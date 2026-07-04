@@ -1,4 +1,5 @@
 use crate::types::{ArbSignal, Exchange};
+use chrono::Utc;
 use reqwest;
 use rsa::RsaPrivateKey;
 use std::collections::HashSet;
@@ -10,6 +11,7 @@ pub async fn run(
     mut rx: mpsc::UnboundedReceiver<ArbSignal>,
     key_id: String,
     private_key: Arc<RsaPrivateKey>,
+    mut db_conn: rusqlite::Connection,
 ) -> Result<(), anyhow::Error> {
     let mut live_trades: HashSet<String> = HashSet::new();
     let client = reqwest::Client::new();
@@ -46,7 +48,26 @@ pub async fn run(
                 .send()
                 .await?;
 
-            println!("{} {:?}", response.status(), response.text().await);
+            let status = response.status().to_string();
+            let body = response.text().await.unwrap_or_default();
+            println!("{} {}", status, body);
+
+            let canonical_id = signal.canonical_id.clone();
+            let ticker = signal.kalshi_ticker.clone();
+            let price = signal.buy_price;
+            let count = signal.size as i32;
+            let created_at = Utc::now().to_rfc3339();
+
+            db_conn = tokio::task::spawn_blocking(move || {
+                db_conn
+                    .execute(
+                        "INSERT INTO trades (canonical_id, ticker, price, count, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        rusqlite::params![canonical_id, ticker, price, count, status, created_at],
+                    )
+                    .ok();
+                db_conn
+            })
+            .await?;
         }
     }
     Ok(())

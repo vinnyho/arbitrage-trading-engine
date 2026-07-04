@@ -102,7 +102,15 @@ pub async fn connect(
                     let best_ask = event.asks.last().and_then(|l| l.price.parse::<f64>().ok());
                     let bid_size = event.bids.last().and_then(|l| l.size.parse::<f64>().ok());
                     let ask_size = event.asks.last().and_then(|l| l.size.parse::<f64>().ok());
-                    store(books, event.asset_id, best_bid, best_ask, bid_size, ask_size).await;
+                    store(
+                        books,
+                        event.asset_id,
+                        best_bid,
+                        best_ask,
+                        bid_size,
+                        ask_size,
+                    )
+                    .await;
                 }
                 continue;
             }
