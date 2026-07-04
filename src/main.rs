@@ -1,3 +1,4 @@
+mod config;
 mod discovery;
 mod executor;
 mod kalshi;
@@ -26,12 +27,14 @@ async fn main() {
         return;
     }
 
+    let config = config::Config::from_env();
+
     let key_id = std::env::var("KALSHI_API_KEY").unwrap();
     let key_path = std::env::var("KALSHI_KEY_PATH").unwrap();
     let pem_string = std::fs::read_to_string(key_path).unwrap();
     let private_key = Arc::new(RsaPrivateKey::from_pkcs8_pem(&pem_string).unwrap());
 
-    let db_conn = rusqlite::Connection::open("trades.db").unwrap();
+    let db_conn = rusqlite::Connection::open(&config.db_path).unwrap();
     db_conn
         .execute(
             "CREATE TABLE IF NOT EXISTS trades (
@@ -47,7 +50,7 @@ async fn main() {
         )
         .unwrap();
 
-    let content = std::fs::read_to_string("pairs.json").unwrap();
+    let content = std::fs::read_to_string(&config.pairs_path).unwrap();
 
     let pairs: Vec<MarketPair> = serde_json::from_str(&content).unwrap();
     let kalshi_books = Arc::new(Mutex::new(HashMap::<String, OrderBook>::new()));
@@ -64,12 +67,13 @@ async fn main() {
 
     let kalshi_key_id = key_id.clone();
     let kalshi_private_key = Arc::clone(&private_key);
+    let kalshi_reconnect_secs = config.reconnect_secs;
     tokio::spawn(async move {
         loop {
             if let Err(e) = kalshi::connect(&kb, &kalshi_key_id, &kalshi_private_key).await {
                 println!("error: {}", e);
             }
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            tokio::time::sleep(Duration::from_secs(kalshi_reconnect_secs)).await;
         }
     });
     let token_ids: Vec<String> = pairs
@@ -78,13 +82,14 @@ async fn main() {
         .collect();
 
     let pb = Arc::clone(&polymarket_books);
+    let poly_reconnect_secs = config.reconnect_secs;
     tokio::spawn(async move {
         loop {
             if let Err(e) = polymarket::connect(&pb, &token_ids).await {
                 println!("error: {}", e);
             }
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            tokio::time::sleep(Duration::from_secs(poly_reconnect_secs)).await;
         }
     });
-    scanner::run(pairs, kalshi_books, polymarket_books, tx).await;
+    scanner::run(pairs, kalshi_books, polymarket_books, tx, config).await;
 }

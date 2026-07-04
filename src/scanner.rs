@@ -9,8 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 
-const MIN_SPREAD: f64 = 0.03;
-
 fn log_arb(file: &mut std::fs::File, msg: &str) {
     let line = format!("{} | {}\n", Utc::now().format("%Y-%m-%d %H:%M:%S"), msg);
     print!("{}", line);
@@ -22,11 +20,12 @@ pub async fn run(
     kalshi_books: Arc<Mutex<HashMap<String, OrderBook>>>,
     poly_books: Arc<Mutex<HashMap<String, OrderBook>>>,
     tx: mpsc::UnboundedSender<ArbSignal>,
+    config: crate::config::Config,
 ) {
     let mut log = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("arb_log.txt")
+        .open(&config.arb_log_path)
         .unwrap();
     let mut active_arbs: HashSet<String> = HashSet::new();
 
@@ -42,7 +41,7 @@ pub async fn run(
                 if let (Some(k_ask), Some(p_bid)) = (k.best_ask, p.best_bid) {
                     let spread = p_bid - k_ask;
                     let key = format!("{}:buy-kalshi", pair.canonical_id);
-                    if spread > MIN_SPREAD {
+                    if spread > config.min_spread {
                         if !active_arbs.contains(&key) {
                             log_arb(
                                 &mut log,
@@ -74,7 +73,7 @@ pub async fn run(
                 if let (Some(p_ask), Some(k_bid)) = (p.best_ask, k.best_bid) {
                     let spread = k_bid - p_ask;
                     let key = format!("{}:buy-poly", pair.canonical_id);
-                    if spread > MIN_SPREAD {
+                    if spread > config.min_spread {
                         if !active_arbs.contains(&key) {
                             log_arb(
                                 &mut log,
@@ -108,6 +107,6 @@ pub async fn run(
         drop(kalshi);
         drop(poly);
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(config.scan_interval_ms)).await;
     }
 }
