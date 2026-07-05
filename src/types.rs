@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct OrderBook {
     pub market_id: String,
     pub best_bid: Option<f64>,

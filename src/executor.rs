@@ -23,26 +23,26 @@ async fn execute_kalshi_trade(
     key_id: &str,
     private_key: &Arc<RsaPrivateKey>,
     signal: &ArbSignal,
-) -> Result<String, anyhow::Error> {
+) -> Result<(bool, String), anyhow::Error> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)?
         .as_millis()
         .to_string();
-    let msg = format!("{}POST/trade-api/v2/portfolio/orders", timestamp);
+    let msg = format!("{}POST/trade-api/v2/portfolio/events/orders", timestamp);
     let signature = crate::kalshi::sign(private_key, &msg)?;
 
     let body = serde_json::json!({
         "ticker": signal.kalshi_ticker,
         "client_order_id": format!("{}-{}", signal.canonical_id, timestamp),
-        "side": "yes",
-        "action": "buy",
-        "count": signal.size as i32,
-        "type": "limit",
-        "yes_price": (signal.buy_price * 100.0).round() as i32,
+        "side": "bid",
+        "count": format!("{:.2}", signal.size),
+        "price": format!("{:.2}", signal.buy_price),
+        "time_in_force": "good_till_canceled",
+        "self_trade_prevention_type": "taker_at_cross",
     });
 
     let response = client
-        .post("https://external-api.kalshi.com/trade-api/v2/portfolio/orders")
+        .post("https://external-api.kalshi.com/trade-api/v2/portfolio/events/orders")
         .header("KALSHI-ACCESS-KEY", key_id)
         .header("KALSHI-ACCESS-SIGNATURE", &signature)
         .header("KALSHI-ACCESS-TIMESTAMP", &timestamp)
@@ -50,18 +50,16 @@ async fn execute_kalshi_trade(
         .send()
         .await?;
 
-    Ok(format!(
-        "{} {}",
-        response.status(),
-        response.text().await.unwrap_or_default()
-    ))
+    let status = response.status();
+    let body_text = response.text().await.unwrap_or_default();
+    Ok((status.is_success(), format!("{} {}", status, body_text)))
 }
 
 async fn execute_polymarket_trade(
     client: &reqwest::Client,
     keys: &PolyKeys,
     signal: &ArbSignal,
-) -> Result<String, anyhow::Error> {
+) -> Result<(bool, String), anyhow::Error> {
     let maker_amount = (signal.buy_price * signal.size * 1_000_000.0).round() as u64;
     let taker_amount = (signal.size * 1_000_000.0).round() as u64;
 
@@ -100,7 +98,8 @@ async fn execute_polymarket_trade(
     });
 
     let body_str = body.to_string();
-    let l2_sig = poly_sign::l2_signature(&keys.secret, &timestamp_secs, "POST", "/order", &body_str)?;
+    let l2_sig =
+        poly_sign::l2_signature(&keys.secret, &timestamp_secs, "POST", "/order", &body_str)?;
 
     let response = client
         .post("https://clob.polymarket.com/order")
@@ -114,11 +113,14 @@ async fn execute_polymarket_trade(
         .send()
         .await?;
 
-    Ok(format!(
-        "{} {}",
-        response.status(),
-        response.text().await.unwrap_or_default()
-    ))
+    let status = response.status();
+    let body_text = response.text().await.unwrap_or_default();
+    let success = status.is_success()
+        && serde_json::from_str::<serde_json::Value>(&body_text)
+            .ok()
+            .and_then(|v| v.get("success").and_then(|s| s.as_bool()))
+            .unwrap_or(false);
+    Ok((success, format!("{} {}", status, body_text)))
 }
 
 pub async fn run(
@@ -127,6 +129,7 @@ pub async fn run(
     private_key: Arc<RsaPrivateKey>,
     poly: PolyKeys,
     mut db_conn: rusqlite::Connection,
+    db_path: String,
     metrics: Arc<Metrics>,
 ) -> Result<(), anyhow::Error> {
     let mut live_trades: HashSet<String> = HashSet::new();
@@ -137,7 +140,6 @@ pub async fn run(
         if live_trades.contains(&signal.canonical_id) {
             continue;
         }
-        live_trades.insert(signal.canonical_id.clone());
 
         let order_started = Instant::now();
         let result = match signal.buy_exchange {
@@ -151,8 +153,11 @@ pub async fn run(
         }
 
         let status = match result {
-            Ok(s) => {
+            Ok((success, s)) => {
                 println!("{}", s);
+                if success {
+                    live_trades.insert(signal.canonical_id.clone());
+                }
                 s
             }
             Err(e) => {
@@ -167,7 +172,7 @@ pub async fn run(
         let count = signal.size as i32;
         let created_at = Utc::now().to_rfc3339();
 
-        db_conn = tokio::task::spawn_blocking(move || {
+        db_conn = match tokio::task::spawn_blocking(move || {
             db_conn
                 .execute(
                     "INSERT INTO trades (canonical_id, ticker, price, count, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -176,7 +181,14 @@ pub async fn run(
                 .ok();
             db_conn
         })
-        .await?;
+        .await
+        {
+            Ok(conn) => conn,
+            Err(e) => {
+                println!("db write task died ({e}), reopening trades.db");
+                rusqlite::Connection::open(&db_path)?
+            }
+        };
     }
     Ok(())
 }

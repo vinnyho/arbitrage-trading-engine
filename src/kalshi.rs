@@ -56,15 +56,24 @@ pub async fn connect(
     let mut request: tokio_tungstenite::tungstenite::http::Request<()> =
         "wss://external-api-ws.kalshi.com/trade-api/ws/v2".into_client_request()?;
 
-    request
-        .headers_mut()
-        .insert("KALSHI-ACCESS-KEY", key_id.parse().unwrap());
-    request
-        .headers_mut()
-        .insert("KALSHI-ACCESS-SIGNATURE", signature.parse().unwrap());
-    request
-        .headers_mut()
-        .insert("KALSHI-ACCESS-TIMESTAMP", timestamp.parse().unwrap());
+    request.headers_mut().insert(
+        "KALSHI-ACCESS-KEY",
+        key_id
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid KALSHI_API_KEY header value: {e}"))?,
+    );
+    request.headers_mut().insert(
+        "KALSHI-ACCESS-SIGNATURE",
+        signature
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid signature header value: {e}"))?,
+    );
+    request.headers_mut().insert(
+        "KALSHI-ACCESS-TIMESTAMP",
+        timestamp
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid timestamp header value: {e}"))?,
+    );
 
     let (connection, _) = connect_async(request).await?;
     let (mut write, mut read) = connection.split();
@@ -81,7 +90,14 @@ pub async fn connect(
         .await?;
 
     while let Some(msg) = read.next().await {
-        if let Ok(Message::Text(text)) = msg {
+        let msg = match msg {
+            Ok(m) => m,
+            Err(e) => {
+                println!("kalshi websocket stream error: {e}");
+                break;
+            }
+        };
+        if let Message::Text(text) = msg {
             match serde_json::from_str::<KalshiTicker>(&text) {
                 Ok(parsed) => {
                     if let Some(data) = parsed.msg {

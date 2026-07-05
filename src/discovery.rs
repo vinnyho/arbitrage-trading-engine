@@ -61,30 +61,51 @@ async fn fetch_kalshi_raw(
     Ok(result)
 }
 
+fn extract_win_subject(question: &str) -> Option<String> {
+    let rest = question.strip_prefix("Will ")?;
+    let idx = rest.find(" win ")?;
+    Some(rest[..idx].to_string())
+}
+
 async fn fetch_poly_raw(
     client: &reqwest::Client,
     tag_id: &str,
 ) -> anyhow::Result<Vec<PolyRawMarket>> {
-    let resp = client
-        .get("https://gamma-api.polymarket.com/events")
-        .query(&[
-            ("tag_id", tag_id),
-            ("active", "true"),
-            ("closed", "false"),
-            ("limit", "100"),
-        ])
-        .send()
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
+    let mut events: Vec<serde_json::Value> = Vec::new();
+    let mut offset = 0u32;
+    loop {
+        let resp = client
+            .get("https://gamma-api.polymarket.com/events")
+            .query(&[
+                ("tag_id", tag_id.to_string()),
+                ("active", "true".to_string()),
+                ("closed", "false".to_string()),
+                ("limit", "100".to_string()),
+                ("offset", offset.to_string()),
+            ])
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
 
-    let events = match resp.as_array() {
-        Some(arr) => arr,
-        None => return Ok(vec![]),
-    };
+        let page = resp.as_array().ok_or_else(|| {
+            anyhow::anyhow!(
+                "unexpected non-array response from Polymarket events endpoint at offset {offset}: {resp}"
+            )
+        })?;
+        if page.is_empty() {
+            break;
+        }
+        let page_len = page.len();
+        events.extend(page.iter().cloned());
+        if page_len < 100 {
+            break;
+        }
+        offset += 100;
+    }
 
     let mut result = Vec::new();
-    for event in events {
+    for event in &events {
         let start_time = event["startTime"].as_str().unwrap_or("").to_string();
         let markets = match event["markets"].as_array() {
             Some(m) => m,
@@ -104,13 +125,27 @@ async fn fetch_poly_raw(
                 continue;
             }
 
-            // push one entry per outcome so the LLM sees both teams
-            for (team, token) in outcomes.iter().zip(tokens.iter()) {
+            if outcomes.iter().any(|o| o != "Yes" && o != "No") {
+                for (team, token) in outcomes.iter().zip(tokens.iter()) {
+                    result.push(PolyRawMarket {
+                        question: question.clone(),
+                        start_time: start_time.clone(),
+                        token_id: token.clone(),
+                        team: team.clone(),
+                    });
+                }
+            } else if let Some(team) = extract_win_subject(&question) {
+                let Some(yes_idx) = outcomes.iter().position(|o| o == "Yes") else {
+                    continue;
+                };
+                let Some(token) = tokens.get(yes_idx) else {
+                    continue;
+                };
                 result.push(PolyRawMarket {
                     question: question.clone(),
                     start_time: start_time.clone(),
                     token_id: token.clone(),
-                    team: team.clone(),
+                    team,
                 });
             }
         }
@@ -185,9 +220,9 @@ async fn ask_llm(
         .json::<serde_json::Value>()
         .await?;
 
-    let text = resp["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("[]");
+    let Some(text) = resp["choices"][0]["message"]["content"].as_str() else {
+        anyhow::bail!("OpenAI response missing choices[0].message.content: {resp}");
+    };
 
     // strip markdown code fences if the model wraps output in ```json ... ```
     let cleaned = text
@@ -214,8 +249,20 @@ pub async fn run_discovery() -> anyhow::Result<()> {
 
     for (sport, kalshi_series, poly_tag) in SPORTS {
         println!("fetching {} ...", sport);
-        let kalshi = fetch_kalshi_raw(&client, kalshi_series).await?;
-        let poly = fetch_poly_raw(&client, poly_tag).await?;
+        let kalshi = match fetch_kalshi_raw(&client, kalshi_series).await {
+            Ok(k) => k,
+            Err(e) => {
+                println!("  failed to fetch kalshi markets for {sport}: {e} — skipping sport");
+                continue;
+            }
+        };
+        let poly = match fetch_poly_raw(&client, poly_tag).await {
+            Ok(p) => p,
+            Err(e) => {
+                println!("  failed to fetch polymarket markets for {sport}: {e} — skipping sport");
+                continue;
+            }
+        };
         println!(
             "  kalshi: {} markets | poly: {} markets",
             kalshi.len(),
@@ -226,7 +273,13 @@ pub async fn run_discovery() -> anyhow::Result<()> {
             println!("  no polymarket markets found, skipping");
             continue;
         }
-        let pairs = ask_llm(&client, sport, &kalshi, &poly).await?;
+        let pairs = match ask_llm(&client, sport, &kalshi, &poly).await {
+            Ok(p) => p,
+            Err(e) => {
+                println!("  failed to match pairs via LLM for {sport}: {e} — skipping sport");
+                continue;
+            }
+        };
         println!("  matched {} pairs", pairs.len());
         all_pairs.extend(pairs);
     }

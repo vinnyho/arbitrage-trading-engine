@@ -30,19 +30,36 @@ pub async fn run(
         .open(&config.arb_log_path)
         .unwrap();
     let mut active_arbs: HashSet<String> = HashSet::new();
+    let max_book_age = Duration::from_millis(config.max_book_age_ms);
 
     loop {
-        let kalshi = kalshi_books.lock().await;
-        let poly = poly_books.lock().await;
+        let kalshi: HashMap<String, OrderBook> = kalshi_books.lock().await.clone();
+        let poly: HashMap<String, OrderBook> = poly_books.lock().await.clone();
 
         for pair in &pairs {
             let k = kalshi.get(&pair.kalshi_ticker);
             let p = poly.get(&pair.polymarket_token_id);
 
             if let (Some(k), Some(p)) = (k, p) {
+                if k.received_at.elapsed() > max_book_age || p.received_at.elapsed() > max_book_age
+                {
+                    active_arbs.remove(&format!(
+                        "{}:{}:buy-kalshi",
+                        pair.kalshi_ticker, pair.polymarket_token_id
+                    ));
+                    active_arbs.remove(&format!(
+                        "{}:{}:buy-poly",
+                        pair.kalshi_ticker, pair.polymarket_token_id
+                    ));
+                    continue;
+                }
+
                 if let (Some(k_ask), Some(p_bid)) = (k.best_ask, p.best_bid) {
                     let spread = p_bid - k_ask;
-                    let key = format!("{}:buy-kalshi", pair.canonical_id);
+                    let key = format!(
+                        "{}:{}:buy-kalshi",
+                        pair.kalshi_ticker, pair.polymarket_token_id
+                    );
                     if spread > config.min_spread {
                         if !active_arbs.contains(&key) {
                             log_arb(
@@ -77,7 +94,10 @@ pub async fn run(
 
                 if let (Some(p_ask), Some(k_bid)) = (p.best_ask, k.best_bid) {
                     let spread = k_bid - p_ask;
-                    let key = format!("{}:buy-poly", pair.canonical_id);
+                    let key = format!(
+                        "{}:{}:buy-poly",
+                        pair.kalshi_ticker, pair.polymarket_token_id
+                    );
                     if spread > config.min_spread {
                         if !active_arbs.contains(&key) {
                             log_arb(
@@ -111,9 +131,6 @@ pub async fn run(
                 }
             }
         }
-
-        drop(kalshi);
-        drop(poly);
 
         tokio::time::sleep(Duration::from_millis(config.scan_interval_ms)).await;
     }

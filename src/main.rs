@@ -72,14 +72,29 @@ async fn main() {
 
     let kb = Arc::clone(&kalshi_books);
     let (tx, rx) = mpsc::unbounded_channel::<ArbSignal>();
-    tokio::spawn(executor::run(
-        rx,
-        key_id.clone(),
-        Arc::clone(&private_key),
-        poly,
-        db_conn,
-        Arc::clone(&metrics),
-    ));
+    let executor_key_id = key_id.clone();
+    let executor_private_key = Arc::clone(&private_key);
+    let executor_metrics = Arc::clone(&metrics);
+    let executor_db_path = config.db_path.clone();
+    tokio::spawn(async move {
+        let outcome = executor::run(
+            rx,
+            executor_key_id,
+            executor_private_key,
+            poly,
+            db_conn,
+            executor_db_path,
+            executor_metrics,
+        )
+        .await;
+        match outcome {
+            Ok(()) => println!(
+                "CRITICAL: executor task ended (signal channel closed) — no more trades will execute"
+            ),
+            Err(e) => println!("CRITICAL: executor task died: {e} — no more trades will execute"),
+        }
+        std::process::exit(1);
+    });
 
     let kalshi_key_id = key_id.clone();
     let kalshi_private_key = Arc::clone(&private_key);
@@ -113,9 +128,10 @@ async fn main() {
     });
 
     let dashboard_port = config.dashboard_port;
+    let dashboard_host = config.dashboard_host.clone();
     let dashboard_metrics = Arc::clone(&metrics);
     tokio::spawn(async move {
-        if let Err(e) = server::run(dashboard_metrics, dashboard_port).await {
+        if let Err(e) = server::run(dashboard_metrics, dashboard_host, dashboard_port).await {
             println!("dashboard server error: {}", e);
         }
     });

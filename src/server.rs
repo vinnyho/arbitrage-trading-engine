@@ -5,14 +5,14 @@ use axum::routing::get;
 use axum::{Json, Router};
 use std::sync::Arc;
 
-pub async fn run(metrics: Arc<Metrics>, port: u16) -> Result<(), anyhow::Error> {
+pub async fn run(metrics: Arc<Metrics>, host: String, port: u16) -> Result<(), anyhow::Error> {
     let app = Router::new()
         .route("/", get(dashboard))
         .route("/api/stats", get(stats))
         .route("/metrics", get(prometheus))
         .with_state(metrics);
 
-    let addr = format!("0.0.0.0:{}", port);
+    let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!("dashboard listening on http://{}", addr);
     axum::serve(listener, app).await?;

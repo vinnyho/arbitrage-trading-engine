@@ -53,6 +53,10 @@ async fn store(
     ask_size: Option<f64>,
 ) {
     let mut books = books.lock().await;
+    let (bid_size, ask_size) = match books.get(&asset_id) {
+        Some(prev) => (bid_size.or(prev.bid_size), ask_size.or(prev.ask_size)),
+        None => (bid_size, ask_size),
+    };
     books.insert(
         asset_id.clone(),
         OrderBook {
@@ -127,13 +131,39 @@ pub async fn connect(
             };
 
             match val.get("event_type").and_then(|v| v.as_str()) {
+                Some("book") => {
+                    if let Ok(event) = serde_json::from_value::<BookEvent>(val) {
+                        let best_bid = event.bids.last().and_then(|l| l.price.parse::<f64>().ok());
+                        let best_ask = event.asks.last().and_then(|l| l.price.parse::<f64>().ok());
+                        let bid_size = event.bids.last().and_then(|l| l.size.parse::<f64>().ok());
+                        let ask_size = event.asks.last().and_then(|l| l.size.parse::<f64>().ok());
+                        store(
+                            books,
+                            metrics,
+                            event.asset_id,
+                            best_bid,
+                            best_ask,
+                            bid_size,
+                            ask_size,
+                        )
+                        .await;
+                    }
+                }
                 Some("price_change") => {
                     if let Ok(msg) = serde_json::from_value::<PriceChangeMsg>(val) {
                         for item in msg.price_changes {
                             let best_bid = item.best_bid.parse::<f64>().ok();
                             let best_ask = item.best_ask.parse::<f64>().ok();
-                            store(books, metrics, item.asset_id, best_bid, best_ask, None, None)
-                                .await;
+                            store(
+                                books,
+                                metrics,
+                                item.asset_id,
+                                best_bid,
+                                best_ask,
+                                None,
+                                None,
+                            )
+                            .await;
                         }
                     }
                 }

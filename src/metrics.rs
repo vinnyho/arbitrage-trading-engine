@@ -53,7 +53,10 @@ impl Metrics {
 
     pub fn record_polymarket_order(&self, latency: Duration) {
         self.polymarket_orders.fetch_add(1, Ordering::Relaxed);
-        push_sample(&self.polymarket_order_latency_us, latency.as_micros() as u64);
+        push_sample(
+            &self.polymarket_order_latency_us,
+            latency.as_micros() as u64,
+        );
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -128,25 +131,74 @@ pub struct Snapshot {
 impl Snapshot {
     pub fn to_prometheus(&self) -> String {
         let mut out = String::new();
-        gauge(&mut out, "trading_uptime_seconds", "Seconds since the process started", self.uptime_secs);
-        counter(&mut out, "trading_kalshi_messages_total", "Total ticker messages received from Kalshi", self.kalshi_messages);
-        counter(&mut out, "trading_polymarket_messages_total", "Total book/price update messages received from Polymarket", self.polymarket_messages);
-        counter(&mut out, "trading_arb_signals_total", "Total arbitrage signals detected", self.arb_signals);
-        counter(&mut out, "trading_kalshi_orders_total", "Total Kalshi order attempts", self.kalshi_orders);
-        counter(&mut out, "trading_polymarket_orders_total", "Total Polymarket order attempts", self.polymarket_orders);
-        summary(&mut out, "trading_arb_detection_latency_seconds", "Latency from price update to arb signal emission", &self.detection_latency_us);
-        summary(&mut out, "trading_kalshi_order_latency_seconds", "Kalshi order HTTP round-trip latency", &self.kalshi_order_latency_us);
-        summary(&mut out, "trading_polymarket_order_latency_seconds", "Polymarket order HTTP round-trip latency", &self.polymarket_order_latency_us);
+        gauge(
+            &mut out,
+            "trading_uptime_seconds",
+            "Seconds since the process started",
+            self.uptime_secs,
+        );
+        counter(
+            &mut out,
+            "trading_kalshi_messages_total",
+            "Total ticker messages received from Kalshi",
+            self.kalshi_messages,
+        );
+        counter(
+            &mut out,
+            "trading_polymarket_messages_total",
+            "Total book/price update messages received from Polymarket",
+            self.polymarket_messages,
+        );
+        counter(
+            &mut out,
+            "trading_arb_signals_total",
+            "Total arbitrage signals detected",
+            self.arb_signals,
+        );
+        counter(
+            &mut out,
+            "trading_kalshi_orders_total",
+            "Total Kalshi order attempts",
+            self.kalshi_orders,
+        );
+        counter(
+            &mut out,
+            "trading_polymarket_orders_total",
+            "Total Polymarket order attempts",
+            self.polymarket_orders,
+        );
+        summary(
+            &mut out,
+            "trading_arb_detection_latency_seconds",
+            "Latency from price update to arb signal emission",
+            &self.detection_latency_us,
+        );
+        summary(
+            &mut out,
+            "trading_kalshi_order_latency_seconds",
+            "Kalshi order HTTP round-trip latency",
+            &self.kalshi_order_latency_us,
+        );
+        summary(
+            &mut out,
+            "trading_polymarket_order_latency_seconds",
+            "Polymarket order HTTP round-trip latency",
+            &self.polymarket_order_latency_us,
+        );
         out
     }
 }
 
 fn gauge(out: &mut String, name: &str, help: &str, value: f64) {
-    out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} gauge\n{name} {value}\n\n"));
+    out.push_str(&format!(
+        "# HELP {name} {help}\n# TYPE {name} gauge\n{name} {value}\n\n"
+    ));
 }
 
 fn counter(out: &mut String, name: &str, help: &str, value: u64) {
-    out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} counter\n{name} {value}\n\n"));
+    out.push_str(&format!(
+        "# HELP {name} {help}\n# TYPE {name} counter\n{name} {value}\n\n"
+    ));
 }
 
 fn summary(out: &mut String, name: &str, help: &str, p: &Percentiles) {

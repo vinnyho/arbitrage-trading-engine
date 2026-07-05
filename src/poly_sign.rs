@@ -12,8 +12,7 @@ const ORDER_TYPE_STR: &str = "Order(uint256 salt,address maker,address signer,ui
 const SOLADY_TYPE_STR: &str = "TypedDataSign(Order contents,string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)Order(uint256 salt,address maker,address signer,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint8 side,uint8 signatureType,uint256 timestamp,bytes32 metadata,bytes32 builder)";
 const EXCHANGE_ADDR: &str = "0xE111180000d2663C0091e4f400237545B87B996B";
 
-pub const BUILDER_HEX: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+pub const BUILDER_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 pub const SIGNATURE_TYPE_POLY_1271: u8 = 3;
 
 fn keccak256(data: &[u8]) -> [u8; 32] {
