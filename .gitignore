@@ -7,5 +7,4 @@ pairs.json
 .DS_Store
 writeup.md
 arb_log.txt
-test_poly.rs
 trades.db
