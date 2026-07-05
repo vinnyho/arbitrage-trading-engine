@@ -24,21 +24,36 @@ async fn execute_kalshi_trade(
     private_key: &Arc<RsaPrivateKey>,
     signal: &ArbSignal,
 ) -> Result<(bool, String), anyhow::Error> {
+    anyhow::ensure!(
+        (0.01..=0.99).contains(&signal.buy_price),
+        "kalshi price out of valid range: {:.4}",
+        signal.buy_price
+    );
+
+    let count = signal.size.floor();
+    anyhow::ensure!(count >= 1.0, "kalshi count must be at least 1");
+
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)?
         .as_millis()
         .to_string();
     let msg = format!("{}POST/trade-api/v2/portfolio/events/orders", timestamp);
     let signature = crate::kalshi::sign(private_key, &msg)?;
+    let client_order_id = format!("arb-{}-{:08x}", timestamp, rand::random::<u32>());
 
     let body = serde_json::json!({
         "ticker": signal.kalshi_ticker,
-        "client_order_id": format!("{}-{}", signal.canonical_id, timestamp),
+        "client_order_id": client_order_id,
         "side": "bid",
-        "count": format!("{:.2}", signal.size),
-        "price": format!("{:.2}", signal.buy_price),
+        "count": format!("{:.2}", count),
+        "price": format!("{:.4}", signal.buy_price),
         "time_in_force": "good_till_canceled",
         "self_trade_prevention_type": "taker_at_cross",
+        "post_only": false,
+        "cancel_order_on_pause": false,
+        "reduce_only": false,
+        "subaccount": 0,
+        "exchange_index": 0,
     });
 
     let response = client

@@ -21,7 +21,7 @@ fn kalshi_min_size(buy_price: f64) -> f64 {
 }
 
 fn poly_min_size(buy_price: f64) -> f64 {
-    1.01 / buy_price
+    (1.01 / buy_price).max(5.0)
 }
 
 pub async fn run(
