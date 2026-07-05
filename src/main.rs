@@ -2,6 +2,7 @@ mod config;
 mod discovery;
 mod executor;
 mod kalshi;
+mod poly_sign;
 mod polymarket;
 mod scanner;
 mod types;
@@ -34,6 +35,15 @@ async fn main() {
     let pem_string = std::fs::read_to_string(key_path).unwrap();
     let private_key = Arc::new(RsaPrivateKey::from_pkcs8_pem(&pem_string).unwrap());
 
+    let poly = executor::PolyKeys {
+        address: std::env::var("POLY_ADDRESS").unwrap(),
+        funder: std::env::var("POLY_FUNDER").unwrap(),
+        private_key: std::env::var("POLY_PRIVATE_KEY").unwrap(),
+        api_key: std::env::var("POLY_API_KEY").unwrap(),
+        secret: std::env::var("POLY_SECRET").unwrap(),
+        passphrase: std::env::var("POLY_PASSPHRASE").unwrap(),
+    };
+
     let db_conn = rusqlite::Connection::open(&config.db_path).unwrap();
     db_conn
         .execute(
@@ -62,6 +72,7 @@ async fn main() {
         rx,
         key_id.clone(),
         Arc::clone(&private_key),
+        poly,
         db_conn,
     ));
 
