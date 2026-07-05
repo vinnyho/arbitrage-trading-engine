@@ -1,3 +1,4 @@
+use crate::metrics::Metrics;
 use crate::types::OrderBook;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{SinkExt, StreamExt};
@@ -9,7 +10,7 @@ use serde_json;
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -41,6 +42,7 @@ pub async fn connect(
     books: &Arc<Mutex<HashMap<String, OrderBook>>>,
     key_id: &str,
     private_key: &RsaPrivateKey,
+    metrics: &Arc<Metrics>,
 ) -> Result<(), anyhow::Error> {
     let timestamp: String = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -95,8 +97,10 @@ pub async fn connect(
                                 best_ask: yes_ask_dollars.parse::<f64>().ok(),
                                 bid_size: data.yes_bid_size_fp.parse::<f64>().ok(),
                                 ask_size: data.yes_ask_size_fp.parse::<f64>().ok(),
+                                received_at: Instant::now(),
                             },
                         );
+                        metrics.record_kalshi_message();
                     }
                 }
                 Err(_) => {}

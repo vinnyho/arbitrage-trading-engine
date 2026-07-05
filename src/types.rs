@@ -4,6 +4,7 @@ pub struct OrderBook {
     pub best_ask: Option<f64>,
     pub bid_size: Option<f64>,
     pub ask_size: Option<f64>,
+    pub received_at: std::time::Instant,
 }
 
 use chrono::{DateTime, Utc};

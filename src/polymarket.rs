@@ -1,3 +1,4 @@
+use crate::metrics::Metrics;
 use crate::types::OrderBook;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
@@ -5,7 +6,7 @@ use serde::Deserialize;
 use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -44,6 +45,7 @@ struct BestBidAskMsg {
 
 async fn store(
     books: &Arc<Mutex<HashMap<String, OrderBook>>>,
+    metrics: &Arc<Metrics>,
     asset_id: String,
     best_bid: Option<f64>,
     best_ask: Option<f64>,
@@ -59,13 +61,17 @@ async fn store(
             best_ask,
             bid_size,
             ask_size,
+            received_at: Instant::now(),
         },
     );
+    drop(books);
+    metrics.record_polymarket_message();
 }
 
 pub async fn connect(
     books: &Arc<Mutex<HashMap<String, OrderBook>>>,
     token_ids: &[String],
+    metrics: &Arc<Metrics>,
 ) -> Result<(), anyhow::Error> {
     let (connection, _) =
         connect_async("wss://ws-subscriptions-clob.polymarket.com/ws/market").await?;
@@ -104,6 +110,7 @@ pub async fn connect(
                     let ask_size = event.asks.last().and_then(|l| l.size.parse::<f64>().ok());
                     store(
                         books,
+                        metrics,
                         event.asset_id,
                         best_bid,
                         best_ask,
@@ -125,7 +132,8 @@ pub async fn connect(
                         for item in msg.price_changes {
                             let best_bid = item.best_bid.parse::<f64>().ok();
                             let best_ask = item.best_ask.parse::<f64>().ok();
-                            store(books, item.asset_id, best_bid, best_ask, None, None).await;
+                            store(books, metrics, item.asset_id, best_bid, best_ask, None, None)
+                                .await;
                         }
                     }
                 }
@@ -133,7 +141,7 @@ pub async fn connect(
                     if let Ok(msg) = serde_json::from_value::<BestBidAskMsg>(val) {
                         let best_bid = msg.best_bid.parse::<f64>().ok();
                         let best_ask = msg.best_ask.parse::<f64>().ok();
-                        store(books, msg.asset_id, best_bid, best_ask, None, None).await;
+                        store(books, metrics, msg.asset_id, best_bid, best_ask, None, None).await;
                     }
                 }
                 Some("new_market")

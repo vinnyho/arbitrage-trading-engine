@@ -1,11 +1,12 @@
+use crate::metrics::Metrics;
+use crate::poly_sign;
 use crate::types::{ArbSignal, Exchange};
 use chrono::Utc;
 use reqwest;
 use rsa::RsaPrivateKey;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-use crate::poly_sign;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 pub struct PolyKeys {
@@ -126,6 +127,7 @@ pub async fn run(
     private_key: Arc<RsaPrivateKey>,
     poly: PolyKeys,
     mut db_conn: rusqlite::Connection,
+    metrics: Arc<Metrics>,
 ) -> Result<(), anyhow::Error> {
     let mut live_trades: HashSet<String> = HashSet::new();
     let client = reqwest::Client::new();
@@ -137,10 +139,16 @@ pub async fn run(
         }
         live_trades.insert(signal.canonical_id.clone());
 
+        let order_started = Instant::now();
         let result = match signal.buy_exchange {
             Exchange::Kalshi => execute_kalshi_trade(&client, &key_id, &private_key, &signal).await,
             Exchange::Polymarket => execute_polymarket_trade(&client, &poly, &signal).await,
         };
+        let order_latency = order_started.elapsed();
+        match signal.buy_exchange {
+            Exchange::Kalshi => metrics.record_kalshi_order(order_latency),
+            Exchange::Polymarket => metrics.record_polymarket_order(order_latency),
+        }
 
         let status = match result {
             Ok(s) => {

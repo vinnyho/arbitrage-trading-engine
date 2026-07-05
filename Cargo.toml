@@ -22,3 +22,4 @@ hmac = "0.12"
 hex = "0.4"
 k256 = { version = "0.13", features = ["ecdsa"] }
 tiny-keccak = { version = "2.0", features = ["keccak"] }
+axum = "0.8.9"

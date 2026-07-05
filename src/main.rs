@@ -2,9 +2,11 @@ mod config;
 mod discovery;
 mod executor;
 mod kalshi;
+mod metrics;
 mod poly_sign;
 mod polymarket;
 mod scanner;
+mod server;
 mod types;
 use crate::discovery::MarketPair;
 use crate::types::{ArbSignal, OrderBook};
@@ -66,6 +68,8 @@ async fn main() {
     let kalshi_books = Arc::new(Mutex::new(HashMap::<String, OrderBook>::new()));
     let polymarket_books = Arc::new(Mutex::new(HashMap::<String, OrderBook>::new()));
 
+    let metrics = metrics::Metrics::new();
+
     let kb = Arc::clone(&kalshi_books);
     let (tx, rx) = mpsc::unbounded_channel::<ArbSignal>();
     tokio::spawn(executor::run(
@@ -74,14 +78,18 @@ async fn main() {
         Arc::clone(&private_key),
         poly,
         db_conn,
+        Arc::clone(&metrics),
     ));
 
     let kalshi_key_id = key_id.clone();
     let kalshi_private_key = Arc::clone(&private_key);
     let kalshi_reconnect_secs = config.reconnect_secs;
+    let kalshi_metrics = Arc::clone(&metrics);
     tokio::spawn(async move {
         loop {
-            if let Err(e) = kalshi::connect(&kb, &kalshi_key_id, &kalshi_private_key).await {
+            if let Err(e) =
+                kalshi::connect(&kb, &kalshi_key_id, &kalshi_private_key, &kalshi_metrics).await
+            {
                 println!("error: {}", e);
             }
             tokio::time::sleep(Duration::from_secs(kalshi_reconnect_secs)).await;
@@ -94,13 +102,23 @@ async fn main() {
 
     let pb = Arc::clone(&polymarket_books);
     let poly_reconnect_secs = config.reconnect_secs;
+    let poly_metrics = Arc::clone(&metrics);
     tokio::spawn(async move {
         loop {
-            if let Err(e) = polymarket::connect(&pb, &token_ids).await {
+            if let Err(e) = polymarket::connect(&pb, &token_ids, &poly_metrics).await {
                 println!("error: {}", e);
             }
             tokio::time::sleep(Duration::from_secs(poly_reconnect_secs)).await;
         }
     });
-    scanner::run(pairs, kalshi_books, polymarket_books, tx, config).await;
+
+    let dashboard_port = config.dashboard_port;
+    let dashboard_metrics = Arc::clone(&metrics);
+    tokio::spawn(async move {
+        if let Err(e) = server::run(dashboard_metrics, dashboard_port).await {
+            println!("dashboard server error: {}", e);
+        }
+    });
+
+    scanner::run(pairs, kalshi_books, polymarket_books, tx, config, metrics).await;
 }

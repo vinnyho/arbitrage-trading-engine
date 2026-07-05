@@ -1,4 +1,5 @@
 use crate::discovery::MarketPair;
+use crate::metrics::Metrics;
 use crate::types::OrderBook;
 use crate::types::{ArbSignal, Exchange};
 use chrono::Utc;
@@ -6,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, mpsc};
 
 fn log_arb(file: &mut std::fs::File, msg: &str) {
@@ -21,6 +22,7 @@ pub async fn run(
     poly_books: Arc<Mutex<HashMap<String, OrderBook>>>,
     tx: mpsc::UnboundedSender<ArbSignal>,
     config: crate::config::Config,
+    metrics: Arc<Metrics>,
 ) {
     let mut log = OpenOptions::new()
         .create(true)
@@ -63,6 +65,9 @@ pub async fn run(
                                 detected_at: Utc::now(),
                             })
                             .ok();
+                            metrics.record_arb_signal(
+                                Instant::now().duration_since(k.received_at.max(p.received_at)),
+                            );
                             active_arbs.insert(key);
                         }
                     } else {
@@ -95,6 +100,9 @@ pub async fn run(
                                 detected_at: Utc::now(),
                             })
                             .ok();
+                            metrics.record_arb_signal(
+                                Instant::now().duration_since(k.received_at.max(p.received_at)),
+                            );
                             active_arbs.insert(key);
                         }
                     } else {
