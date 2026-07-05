@@ -16,6 +16,14 @@ fn log_arb(file: &mut std::fs::File, msg: &str) {
     file.write_all(line.as_bytes()).ok();
 }
 
+fn kalshi_min_size(buy_price: f64) -> f64 {
+    (1.01 / buy_price).ceil()
+}
+
+fn poly_min_size(buy_price: f64) -> f64 {
+    1.01 / buy_price
+}
+
 pub async fn run(
     pairs: Vec<MarketPair>,
     kalshi_books: Arc<Mutex<HashMap<String, OrderBook>>>,
@@ -78,7 +86,7 @@ pub async fn run(
                                 buy_price: k_ask,
                                 sell_price: p_bid,
                                 spread,
-                                size: 1.0,
+                                size: kalshi_min_size(k_ask),
                                 detected_at: Utc::now(),
                             })
                             .ok();
@@ -116,7 +124,7 @@ pub async fn run(
                                 buy_price: p_ask,
                                 sell_price: k_bid,
                                 spread,
-                                size: 1.0,
+                                size: poly_min_size(p_ask),
                                 detected_at: Utc::now(),
                             })
                             .ok();
